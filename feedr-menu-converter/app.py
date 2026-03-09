@@ -71,6 +71,25 @@ source_input = st.text_input(
 uploaded_bytes = None
 uploaded_file = None
 
+# JEFB JSON paste fallback
+jefb_json_paste = None
+if platform == 'JEFB':
+    with st.expander('Having trouble? Paste the JSON instead'):
+        st.markdown("""
+The JEFB API sometimes blocks automated requests. If you get a 403 error, do this:
+
+1. Make sure you are logged into [app.business.just-eat.co.uk](https://app.business.just-eat.co.uk)
+2. Open the API URL directly in your browser — replace `menus/vendors/farmer-j/st-james` with your restaurant's slugs:
+   `https://app.business.just-eat.co.uk/api/public/deliverable-menus/`**vendor-slug**`/2026-03-12T13:00:00.000Z?locationSlug=`**location-slug**
+3. You'll see a page of raw JSON text — select all (Ctrl+A / Cmd+A), copy, and paste it below.
+""")
+        jefb_json_paste = st.text_area(
+            'Paste JSON here',
+            height=120,
+            placeholder='{"item": {"vendor": {"name": "..."}, ...',
+            label_visibility='collapsed',
+        )
+
 # Optional VAT file
 with st.expander('Optional: Upload VAT rates file'):
     vat_file = st.file_uploader(
@@ -83,8 +102,9 @@ convert_btn = st.button('Convert Menu', type='primary', use_container_width=True
 
 # ── Processing ────────────────────────────────────────────────────────────────
 if convert_btn:
-    if not source_input and not uploaded_file:
-        st.error('Please enter a URL or upload a file first.')
+    has_jefb_json = platform == 'JEFB' and jefb_json_paste and jefb_json_paste.strip()
+    if not source_input and not uploaded_file and not has_jefb_json:
+        st.error('Please enter a URL or paste JSON first.')
         st.stop()
 
     with st.spinner('Processing menu...'):
@@ -111,10 +131,19 @@ if convert_btn:
                             pass
                 pipeline.vat_lookup = vat_lookup
 
-            result = pipeline.run(
-                source=source_input or '',
-                uploaded_bytes=uploaded_bytes
-            )
+            # For JEFB: use pasted JSON if provided, otherwise fetch from URL
+            if has_jefb_json:
+                adapter.fetch_json_string(jefb_json_paste.strip())
+                items = adapter.parse()
+                from core.pipeline import ProcessingPipeline as PP
+                # Run pipeline stages manually (skip fetch)
+                adapter.extract = lambda source: items
+                result = pipeline.run(source='pasted_json')
+            else:
+                result = pipeline.run(
+                    source=source_input or '',
+                    uploaded_bytes=uploaded_bytes
+                )
 
             # Generate outputs
             from outputs.readable_csv import generate as gen_readable
@@ -183,7 +212,18 @@ if convert_btn:
 """)
 
         except Exception as e:
-            st.error(f'Something went wrong: {e}')
+            err_str = str(e)
+            if '403' in err_str and platform == 'JEFB':
+                st.error(
+                    '**JEFB returned a 403 — the API requires you to be logged in.**\n\n'
+                    'Use the "Having trouble? Paste the JSON instead" section above:\n'
+                    '1. Log into app.business.just-eat.co.uk in your browser\n'
+                    '2. Open the API URL directly (swap in your vendor/location slugs):\n'
+                    '   `https://app.business.just-eat.co.uk/api/public/deliverable-menus/`**vendor**`/2026-03-12T13:00:00.000Z?locationSlug=`**location**\n'
+                    '3. Copy all the text, paste it into the JSON box, and click Convert again.'
+                )
+            else:
+                st.error(f'Something went wrong: {e}')
             import traceback
             with st.expander('Full error details'):
                 st.code(traceback.format_exc())

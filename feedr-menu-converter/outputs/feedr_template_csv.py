@@ -41,8 +41,22 @@ def generate(result: PipelineResult) -> bytes:
         row['Image URL']        = item.image_url
         row['isMenuItem*']      = 'YES'
         row['isOption*']        = 'YES' if item.is_option else 'NO'
-        row['Long Description*']= item.description
-        row['Ingredients*']     = item.description
+        row['Long Description*']  = item.description
+        row['Ingredients*']       = item.description
+
+        # Short Description: max 70 characters, break at word boundary
+        desc = item.description or ''
+        if len(desc) <= 70:
+            row['Short Description*'] = desc
+        else:
+            truncated = desc[:70].rsplit(' ', 1)[0].rstrip(',;')
+            row['Short Description*'] = truncated
+            item.assumptions.append(__import__('core.data_models', fromlist=['Assumption']).Assumption(
+                category='data_quality',
+                detail=f'Short Description truncated to 70 chars: "{truncated}"',
+                severity='info',
+                field='Short Description*'
+            ))
         row['OriginalPrice*']   = item.price
         row['vatRate']          = item.vat_rate
 

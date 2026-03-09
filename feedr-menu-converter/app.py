@@ -135,8 +135,6 @@ if convert_btn:
             if has_jefb_json:
                 adapter.fetch_json_string(jefb_json_paste.strip())
                 items = adapter.parse()
-                from core.pipeline import ProcessingPipeline as PP
-                # Run pipeline stages manually (skip fetch)
                 adapter.extract = lambda source: items
                 result = pipeline.run(source='pasted_json')
             else:
@@ -151,65 +149,13 @@ if convert_btn:
 
             readable_bytes = gen_readable(result)
             feedr_bytes    = gen_feedr(result)
-
             slug = result.restaurant_name.replace(' ', '_').lower()[:30]
 
-            # ── Results panel ─────────────────────────────────────────────────
-            st.divider()
-            st.success(f'✓ {result.summary["total"]} items processed from **{result.restaurant_name}**')
-
-            col1, col2, col3 = st.columns(3)
-            col1.metric('Menu items', result.summary['main_items'])
-            col2.metric('Options', result.summary['options'])
-            col3.metric('Critical issues', result.summary['criticals'])
-
-            c1, c2 = st.columns(2)
-            c1.download_button(
-                '⬇ Download Readable CSV',
-                data=readable_bytes,
-                file_name=f'{slug}_menu_readable.csv',
-                mime='text/csv',
-                use_container_width=True,
-            )
-            c2.download_button(
-                '⬇ Download Feedr Upload CSV',
-                data=feedr_bytes,
-                file_name=f'{slug}_feedr_upload.csv',
-                mime='text/csv',
-                use_container_width=True,
-            )
-
-            # ── Assumption breakdown ──────────────────────────────────────────
-            if result.criticals:
-                with st.expander(f'❌ Critical issues ({len(result.criticals)}) — must fix before uploading'):
-                    for a in result.criticals:
-                        st.error(a.detail)
-
-            if result.warnings:
-                with st.expander(f'⚠ Warnings ({len(result.warnings)})'):
-                    for a in result.warnings[:50]:
-                        st.warning(a.detail)
-                    if len(result.warnings) > 50:
-                        st.caption(f'... and {len(result.warnings) - 50} more (see CSV)')
-
-            with st.expander('ℹ Assumption breakdown'):
-                s = result.summary
-                st.markdown(f"""
-**Allergen sources**
-- From source data: {s['allergen_sources'].get('source', 0)}
-- Inferred (fuzzy rules): {s['allergen_sources'].get('fuzzy', 0)}
-- Unknown (manual review): {s['allergen_sources'].get('unknown', 0)}
-
-**VAT matching**
-- Exact match: {s['vat_sources'].get('exact', 0)}
-- Word-overlap inferred: {s['vat_sources'].get('word_overlap', 0)}
-- Manual override: {s['vat_sources'].get('manual', 0)}
-- Unknown: {s['vat_sources'].get('unknown', 0)}
-
-**Coverage**
-- Items with images: {s['with_images']} / {s['total']}
-- Items with nutrition: {s['with_nutrition']} / {s['total']}
-""")
+            # Store in session state so downloads persist after button clicks
+            st.session_state['result']         = result
+            st.session_state['readable_bytes'] = readable_bytes
+            st.session_state['feedr_bytes']    = feedr_bytes
+            st.session_state['slug']           = slug
 
         except Exception as e:
             err_str = str(e)
@@ -227,6 +173,71 @@ if convert_btn:
             import traceback
             with st.expander('Full error details'):
                 st.code(traceback.format_exc())
+
+# ── Results panel — rendered from session state so it survives download clicks ─
+if 'result' in st.session_state:
+    result         = st.session_state['result']
+    readable_bytes = st.session_state['readable_bytes']
+    feedr_bytes    = st.session_state['feedr_bytes']
+    slug           = st.session_state['slug']
+
+    st.divider()
+    st.success(f'✓ {result.summary["total"]} items processed from **{result.restaurant_name}**')
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric('Menu items', result.summary['main_items'])
+    col2.metric('Options', result.summary['options'])
+    col3.metric('Critical issues', result.summary['criticals'])
+
+    c1, c2 = st.columns(2)
+    c1.download_button(
+        '⬇ Download Readable CSV',
+        data=readable_bytes,
+        file_name=f'{slug}_menu_readable.csv',
+        mime='text/csv',
+        use_container_width=True,
+    )
+    c2.download_button(
+        '⬇ Download Feedr Upload CSV',
+        data=feedr_bytes,
+        file_name=f'{slug}_feedr_upload.csv',
+        mime='text/csv',
+        use_container_width=True,
+    )
+
+    # ── Assumption breakdown ──────────────────────────────────────────
+    if result.summary['criticals']:
+        criticals = [a for i in result.items for a in i.assumptions if a.severity == 'critical']
+        with st.expander(f'❌ Critical issues ({result.summary["criticals"]}) — must fix before uploading'):
+            for a in criticals:
+                st.error(a.detail)
+
+    if result.summary['warnings']:
+        warnings = [a for i in result.items for a in i.assumptions if a.severity == 'warning']
+        with st.expander(f'⚠ Warnings ({result.summary["warnings"]})'):
+            for a in warnings[:50]:
+                st.warning(a.detail)
+            if len(warnings) > 50:
+                st.caption(f'... and {len(warnings) - 50} more (see CSV)')
+
+    with st.expander('ℹ Assumption breakdown'):
+        s = result.summary
+        st.markdown(f"""
+**Allergen sources**
+- From source data: {s['allergen_sources'].get('source', 0)}
+- Inferred (fuzzy rules): {s['allergen_sources'].get('fuzzy', 0)}
+- Unknown (manual review): {s['allergen_sources'].get('unknown', 0)}
+
+**VAT matching**
+- Exact match: {s['vat_sources'].get('exact', 0)}
+- Word-overlap inferred: {s['vat_sources'].get('word_overlap', 0)}
+- Manual override: {s['vat_sources'].get('manual', 0)}
+- Unknown: {s['vat_sources'].get('unknown', 0)}
+
+**Coverage**
+- Items with images: {s['with_images']} / {s['total']}
+- Items with nutrition: {s['with_nutrition']} / {s['total']}
+""")
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.divider()
